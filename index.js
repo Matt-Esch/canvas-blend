@@ -2,28 +2,30 @@ var max = Math.max
 var min = Math.min
 var toString = Object.prototype.toString
 
-var canvasType = "[object Canvas]"
-var contextType = "[object Context2D]"
+var contextType = "[object CanvasRenderingContext2D]"
 var defaults = {
     width: "auto",
     height: "auto",
     srcX: 0,
     srcY: 0,
     dstX: 0,
-    dstY: 0
+    dstY: 0,
+    outX: 0,
+    outY: 0
 }
 
 module.exports = blend
 
-function blend() { }
-
-function blend(blender, src, dst, outImage, opts) {
-    var srcW, srcH, dstW, dstH, outW, outH, srcData, dstData, outData
+function blend(blender, src, dst, out, opts) {
+    var srcW, srcH, dstW, dstH, outW, outH, srcImage, dstImage, outImage
 
     var srcType = toString.apply(src)
     var dstType = toString.apply(dst)
+    var outType = toString.apply(out)
 
-    var srcX = opts.srcX || defaults.srxX
+    opts = opts || defaults
+
+    var srcX = opts.srcX || defaults.srcX
     var srcY = opts.srcY || defaults.srcY
     var dstX = opts.dstX || defaults.dstX
     var dstY = opts.dstY || defaults.dstY
@@ -49,8 +51,13 @@ function blend(blender, src, dst, outImage, opts) {
         dstH = dst.height
     }
 
-    outW = outImage.width
-    outH = outImage.height
+    if (outType === contextType) {
+        outW = out.canvas.width
+        outH = out.canvas.height
+    } else {
+        outW = out.width
+        outH = out.height
+    }
 
     if (width === "auto") {
         width = srcW
@@ -63,24 +70,41 @@ function blend(blender, src, dst, outImage, opts) {
     width = max(0, min(width, srcW - srcX, dstW - dstX, outW - outX))
     height = max(0, min(height, srcH - srcY, dstH - dstY, outH- outY))
 
-    srcData = getImageData(src, srcX, srcY, width, height)
-    dstData = getImageData(dst, dstX, dstY, width, height)
-
-    if (outX === 0 && outY === 0 && outW === width && outH === height) {
-        outData = outImage.data
-    } else {
-        outData = new Uint8ClampedArray(width * height * 4)
+    if (width === 0 || height === 0) {
+        return
     }
 
-    blender(srcData, dstData, outData)
+    srcImage = getImageData(src, srcX, srcY, width, height)
+    dstImage = getImageData(dst, dstX, dstY, width, height)
 
-    putImageData(outImage, outData, outX, outY, width, height)
+    if (out === dst) {
+        outImage = dstImage
+    } else if (outType !== contextType &&
+        outX === 0 &&
+        outY === 0 &&
+        outW === width &&
+        outH === height
+    ) {
+        outImage = out.data
+    } else {
+        outImage = new Uint8ClampedArray(width * height * 4)
+    }
+
+    blender(srcImage.data, dstImage.data, outImage.data)
+
+    putImageData(out, outImage, outX, outY)
 }
 
 function getImageData(image, x, y, width, height) {
-    if (width >= image.width && height >= image.height) {
+    if (toString.apply(image) === contextType) {
+        return image.getImageData(x, y, width, height)
+    }
+
+    if (x === 0 && y === 0 && width >= image.width && height >= image.height) {
         return image.data
     }
+
+    var imageData = image.data
 
     // clamp the width and height
     width = max(0, min(x + width, image.width - x))
@@ -97,32 +121,67 @@ function getImageData(image, x, y, width, height) {
         var rowStart = (srcWidth * (row + y)) + srcLeft
         var rowEnd = rowStart + rowWidth
 
-        surface.set(image.subarray(rowStart, rowEnd), row * rowWidth)
+        surface.set(imageData.subarray(rowStart, rowEnd), row * rowWidth)
     }
 
-    return surface
+    return {
+        width: width,
+        height: height,
+        data: surface
+    }
 }
 
-function putImageData(image, data, x, y, width, height) {
-    if (image.data === data && x === 0 && y === 0) {
+function putImageData(dst, src, x, y) {
+    // if you put an image over itself in the same place then exit early
+    if (src === dst && x === 0 && y === 0) {
         return
     }
 
-    // clamp the width and height
-    width = max(0, min(x + width, image.width - x))
-    height = max(0, min(y + height, image.height - y))
+    if (toString.apply(dst) === contextType) {
+        var imageData = dst.createImageData(src.width, src.height)
+        imageData.data.set(src.data)
+        dst.putImageData(imageData, x, y)
+        return
+    }
 
-    var surface = image.data
+    var srcMinX = x
+    var srcMinY = y
+    var srcMaxX = x + src.width - 1
+    var srcMaxY = y + src.height - 1
 
-    var rowWidth = width * 4
-    var srcWidth = image.width * 4
-    var srcLeft = 4 * x
+    var dstMinX = 0
+    var dstMinY = 0
+    var dstMaxX = dst.width - 1
+    var dstMaxY = dst.height - 1
+
+    // bbox overlap check
+    if (srcMinX > dstMaxX || srcMaxX < dstMinX || srcMinY > dstMaxY || srcMaxY < dstMinY) {
+        return
+    }
+
+    var oMinX = max(srcMinX, dstMinX)
+    var oMinY = max(srcMinY, dstMinY)
+    var oMaxX = min(srcMaxX, dstMaxX)
+    var oMaxY = min(srcMaxY, dstMaxY)
 
 
-    for (var row = 0; row < height; row++) {
-        var rowStart = (srcWidth * (row + y)) + srcLeft
-        var rowEnd = rowStart + rowWidth
+    var source = src.data
+    var destination = dst.data
 
-        surface.set(image.subarray(rowStart, rowEnd), row * rowWidth)
+    var srcLeft = max(oMinX - x, 0)
+    var srcTop = max(oMinY - y, 0)
+    var srcWidth = src.width
+    var dstLeft = oMinX
+    var dstTop = oMinY
+    var dstWidth = dst.width
+    var rows = oMaxY - oMinY + 1
+    var columns = oMaxX - oMinX + 1
+
+    for (var row = 0; row < rows; row++) {
+        var srcStart = 4 * ((srcWidth * (row + srcTop)) + srcLeft)
+        var srcEnd = srcStart + (4 * columns)
+        var dstStart = 4 * ((dstWidth * (row + dstTop)) + dstLeft)
+
+        destination.set(source.subarray(srcStart, srcEnd), dstStart)
     }
 }
