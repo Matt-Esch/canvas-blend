@@ -85,9 +85,13 @@ function blend(blender, src, dst, out, opts) {
         outW === width &&
         outH === height
     ) {
-        outImage = out.data
+        outImage = out
     } else {
-        outImage = new Uint8ClampedArray(width * height * 4)
+        outImage = {
+            width: width,
+            height: height,
+            data: new Uint8ClampedArray(width * height * 4)
+        }
     }
 
     blender(srcImage.data, dstImage.data, outImage.data)
@@ -101,7 +105,7 @@ function getImageData(image, x, y, width, height) {
     }
 
     if (x === 0 && y === 0 && width >= image.width && height >= image.height) {
-        return image.data
+        return image
     }
 
     var imageData = image.data
@@ -155,7 +159,8 @@ function putImageData(dst, src, x, y) {
     var dstMaxY = dst.height - 1
 
     // bbox overlap check
-    if (srcMinX > dstMaxX || srcMaxX < dstMinX || srcMinY > dstMaxY || srcMaxY < dstMinY) {
+    if (srcMinX > dstMaxX || srcMaxX < dstMinX ||
+        srcMinY > dstMaxY || srcMaxY < dstMinY) {
         return
     }
 
